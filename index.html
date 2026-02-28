@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MatTrack — Materials Lab Tracker</title>
+
+<!-- React + Babel (no build step needed) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #F5F5F7; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; color: #1D1D1F; }
+  #root { min-height: 100vh; }
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-thumb { background: #D2D2D7; border-radius: 3px; }
+  select option { background: #fff; }
+
+  /* Animations */
+  @keyframes fadeIn  { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:translateY(0) } }
+  @keyframes popIn   { from { opacity:0; transform:scale(.96)       } to { opacity:1; transform:scale(1)     } }
+  @keyframes spin    { to   { transform: rotate(360deg) } }
+  @keyframes pulse   { 0%,100% { opacity:1 } 50% { opacity:.4 } }
+
+  .fadeIn  { animation: fadeIn  .25s ease; }
+  .popIn   { animation: popIn   .2s  cubic-bezier(.34,1.56,.64,1); }
+  .spin    { animation: spin    .8s  linear infinite; }
+
+  .mat-row:hover      { background: #F5F5F7 !important; cursor: pointer; }
+  .nav-btn:hover      { color:#1D1D1F !important; background:#F2F2F7 !important; }
+  .stat-card          { transition: transform .2s, box-shadow .2s; }
+  .stat-card:hover    { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.09) !important; }
+  .hover-bg:hover     { background: #F5F5F7 !important; }
+
+  input:focus, select:focus, textarea:focus {
+    border-color: #0071E3 !important;
+    box-shadow: 0 0 0 3px rgba(0,113,227,.12) !important;
+    outline: none;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 🔑  PASTE YOUR SUPABASE CREDENTIALS HERE — then save & push to GitHub
+// ═══════════════════════════════════════════════════════════════════════════════
+const SUPABASE_URL     = "https://kxlkzcskhgicybzawvwj.supabase.co";
+const SUPABASE_ANON    = "sb_publishable_-EdBe5Kd82rlvEg-vF6J6A_0T9cIJTw";
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Supabase REST client (no npm needed) ──────────────────────────────────────
+const sb = {
+  async req(path, method = "GET", body) {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      method,
+      headers: {
+        "apikey": SUPABASE_ANON,
+        "Authorization": `Bearer ${SUPABASE_ANON}`,
+        "Content-Type": "application/json",
+        "Prefer": method === "POST" ? "return=representation" : "return=minimal",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const txt = await res.text();
+    return txt ? JSON.parse(txt) : null;
+  },
+  get:    path        => sb.req(path),
+  post:   (path, b)   => sb.req(path, "POST",  b),
+  patch:  (path, b)   => sb.req(path, "PATCH", b),
+  delete: path        => sb.req(path, "DELETE"),
+};
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const TEAM = ["Munireach Nannory","Andrew Wood","Vivek Chawla","Stephen Puplampu"];
+
+const BUILT_IN_TESTS = [
+  {id:"tensile",   label:"Tensile Test",           category:"Mechanical",         color:"#FF6B35"},
+  {id:"hardness",  label:"Hardness (Vickers)",      category:"Mechanical",         color:"#FF6B35"},
+  {id:"xrd",       label:"XRD",                     category:"Structural",         color:"#0071E3"},
+  {id:"sem",       label:"SEM Imaging",             category:"Structural",         color:"#0071E3"},
+  {id:"dsc",       label:"DSC",                     category:"Thermal",            color:"#9B5DE5"},
+  {id:"tga",       label:"TGA",                     category:"Thermal",            color:"#9B5DE5"},
+  {id:"electrical",label:"Electrical Conductivity", category:"Electrical/Optical", color:"#05C091"},
+  {id:"optical",   label:"UV-Vis Spectroscopy",     category:"Electrical/Optical", color:"#05C091"},
+  {id:"density",   label:"Density / Porosity",      category:"Material Properties",color:"#F5A623"},
+  {id:"eds",       label:"EDS / Composition",       category:"Material Properties",color:"#F5A623"},
+];
+
+const STATUS_OPTS = ["Synthesized","In Testing","Completed","Needs Retest","Archived"];
+const STATUS_COLORS = {Synthesized:"#0071E3","In Testing":"#FF6B35",Completed:"#34C759","Needs Retest":"#FF3B30",Archived:"#8E8E93"};
+const OUTCOME_COLORS = {"Pass":"#34C759","Fail / Anomaly":"#FF3B30","Inconclusive":"#FF9500","In Progress":"#0071E3"};
+
+const AVATAR_BG = {
+  "Munireach Nannory":"#0071E3","Andrew Wood":"#FF6B35",
+  "Vivek Chawla":"#9B5DE5","Stephen Puplampu":"#05C091"
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const uid      = () => Math.random().toString(36).slice(2,8).toUpperCase();
+const today    = () => new Date().toISOString().split("T")[0];
+const getMeta  = id => BUILT_IN_TESTS.find(t=>t.id===id) || {label:id||"Unknown",color:"#8E8E93",category:"Custom"};
+const timeAgo  = d => {
+  const days = Math.floor((Date.now()-new Date(d))/86400000);
+  if(days===0)return"Today"; if(days===1)return"Yesterday";
+  if(days<7) return days+"d ago"; if(days<30) return Math.floor(days/7)+"w ago";
+  return Math.floor(days/30)+"mo ago";
+};
+const initials = n => (n||"?").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+const avatarBg = n => AVATAR_BG[n] || "#"+((n||"").split("").reduce((a,c)=>a+c.charCodeAt(0),5381)%0xFFFFFF).toString(16).padStart(6,"0");
+const fileIcon = n => {const e=(n||"").split(".").pop().toLowerCase();return{xlsx:"📊",xls:"📊",csv:"📊",pptx:"📑",ppt:"📑",docx:"📄",doc:"📄",pdf:"📄",png:"🖼",jpg:"🖼",jpeg:"🖼",gif:"🖼",tiff:"🖼",zip:"📦",py:"💻",txt:"📝"}[e]||"📎";};
+const fileColor= n => {const e=(n||"").split(".").pop().toLowerCase();if(["xlsx","xls","csv"].includes(e))return"#34C759";if(["pptx","ppt"].includes(e))return"#FF6B35";if(["docx","doc","pdf"].includes(e))return"#0071E3";if(["png","jpg","jpeg","gif","tiff"].includes(e))return"#9B5DE5";return"#8E8E93";};
+const fmtBytes = b => b<1024?b+" B":b<1048576?(b/1024).toFixed(1)+" KB":(b/1048576).toFixed(1)+" MB";
+const fileToB64= f => new Promise((ok,err)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=err;r.readAsDataURL(f);});
+
+// Fuzzy search
+function fuzzy(str, q) {
+  if (!q) return 1;
+  str = str.toLowerCase(); q = q.toLowerCase();
+  if (str.includes(q)) return 1;
+  const tri = s => { const set=new Set(); const p="  "+s+"  "; for(let i=0;i<p.length-2;i++)set.add(p.slice(i,i+3)); return set; };
+  const ss=tri(str), qs=tri(q); let ov=0; qs.forEach(t=>{if(ss.has(t))ov++;});
+  return (2*ov)/(ss.size+qs.size);
+}
+function searchScore(mat, q) {
+  if (!q) return {match:true,score:1};
+  const fields=[mat.name,mat.id,mat.composition||"",mat.form||"",mat.created_by||"",...(mat.tags||[]),mat.notes||"",...(mat.tests||[]).map(t=>(t.result||"")+" "+(t.tester||"")+" "+(getMeta(t.type).label||""))];
+  const best = Math.max(...fields.map(f=>fuzzy(f,q)));
+  return {match:best>0.15, score:best};
+}
+
+// ── Primitive Components ──────────────────────────────────────────────────────
+const S = {
+  inp: { width:"100%", border:"1px solid #D2D2D7", borderRadius:10, padding:"10px 14px", fontSize:15, fontFamily:"inherit", color:"#1D1D1F", background:"#fff", outline:"none", boxSizing:"border-box" },
+};
+
+function Pill({children, color="#999"}) {
+  return <span style={{display:"inline-flex",alignItems:"center",padding:"2px 10px",borderRadius:20,background:color+"14",color,fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>{children}</span>;
+}
+function Avatar({name, size=28}) {
+  return <div style={{width:size,height:size,borderRadius:"50%",background:avatarBg(name),display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:size*.38,fontWeight:700,flexShrink:0}}>{initials(name)}</div>;
+}
+function StatusPill({status}) {
+  return <Pill color={STATUS_COLORS[status]||"#999"}>{status}</Pill>;
+}
+function Field({label, required, hint, children}) {
+  return (
+    <div style={{marginBottom:18}}>
+      <label style={{display:"block",fontSize:13,fontWeight:600,color:"#6E6E73",marginBottom:6}}>
+        {label}{required&&<span style={{color:"#FF3B30"}}> *</span>}
+      </label>
+      {children}
+      {hint&&<div style={{fontSize:12,color:"#8E8E93",marginTop:4}}>{hint}</div>}
+    </div>
+  );
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────────────
+function Modal({title, onClose, wide, children}) {
+  useEffect(()=>{
+    const h = e=>{if(e.key==="Escape")onClose();};
+    window.addEventListener("keydown",h);
+    return ()=>window.removeEventListener("keydown",h);
+  },[onClose]);
+  return (
+    <div onClick={e=>{if(e.target===e.currentTarget)onClose();}}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.25)",backdropFilter:"blur(8px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div className="popIn" style={{background:"#fff",borderRadius:18,width:"100%",maxWidth:wide?640:520,maxHeight:"90vh",overflow:"auto",boxShadow:"0 32px 80px rgba(0,0,0,0.18)"}}>
+        <div style={{padding:"22px 28px 18px",borderBottom:"1px solid #F2F2F7",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#fff",zIndex:10}}>
+          <span style={{fontSize:18,fontWeight:700,color:"#1D1D1F",letterSpacing:"-0.02em"}}>{title}</span>
+          <button onClick={onClose} style={{background:"#F2F2F7",border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",fontSize:16,color:"#6E6E73",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+        </div>
+        <div style={{padding:"22px 28px 28px"}}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── Inline Add-New Input ──────────────────────────────────────────────────────
+function AddNew({placeholder, onAdd, color="#0071E3"}) {
+  const [open,setOpen]=useState(false);
+  const [val,setVal]=useState("");
+  const ref=useRef();
+  useEffect(()=>{if(open&&ref.current)ref.current.focus();},[open]);
+  const commit=()=>{const v=val.trim();if(v){onAdd(v);setVal("");setOpen(false);}};
+  if(!open) return(
+    <button onClick={()=>setOpen(true)} style={{display:"flex",alignItems:"center",gap:5,background:"none",border:"1px dashed #D2D2D7",borderRadius:8,padding:"5px 12px",cursor:"pointer",color,fontSize:13,fontWeight:600,marginTop:6,width:"100%"}}>
+      <span style={{fontSize:16}}>+</span> Add new…
+    </button>
+  );
+  return(
+    <div style={{display:"flex",gap:6,marginTop:6}}>
+      <input ref={ref} style={{...S.inp,flex:1,fontSize:14,padding:"7px 11px"}} placeholder={placeholder} value={val}
+        onChange={e=>setVal(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter")commit();if(e.key==="Escape"){setOpen(false);setVal("");}}} />
+      <button onClick={commit} style={{background:color,border:"none",color:"#fff",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:600,fontSize:13}}>Add</button>
+      <button onClick={()=>{setOpen(false);setVal("");}} style={{background:"#F2F2F7",border:"none",color:"#6E6E73",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:14}}>✕</button>
+    </div>
+  );
+}
+
+// ── File Upload Zone ──────────────────────────────────────────────────────────
+function FileZone({files, onChange}) {
+  const [drag,setDrag]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const ref=useRef();
+  const process = async raw => {
+    setBusy(true);
+    const out = await Promise.all(Array.from(raw).map(async f=>({id:uid(),name:f.name,size:f.size,type:f.type,data:await fileToB64(f),uploadedAt:today()})));
+    onChange([...files,...out]);
+    setBusy(false);
+  };
+  return(
+    <div>
+      <div onClick={()=>ref.current.click()}
+        onDragOver={e=>{e.preventDefault();setDrag(true)}} onDragLeave={()=>setDrag(false)}
+        onDrop={e=>{e.preventDefault();setDrag(false);process(e.dataTransfer.files)}}
+        style={{border:"2px dashed "+(drag?"#0071E3":"#D2D2D7"),borderRadius:12,padding:20,textAlign:"center",cursor:"pointer",background:drag?"#EAF3FF":"#F9F9FB",transition:"all .15s"}}>
+        <input ref={ref} type="file" multiple style={{display:"none"}} onChange={e=>process(e.target.files)} />
+        <div style={{fontSize:28,marginBottom:8}}>{busy?"⏳":"📁"}</div>
+        <div style={{fontSize:14,fontWeight:600,color:"#1D1D1F",marginBottom:4}}>{busy?"Uploading…":"Drop files here or click to browse"}</div>
+        <div style={{fontSize:12,color:"#8E8E93"}}>Excel, PowerPoint, Images, PDF, raw data — any file type</div>
+      </div>
+      {files.length>0&&(
+        <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:8}}>
+          {files.map(f=>(
+            <div key={f.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:"#F9F9FB",borderRadius:8,border:"1px solid #F2F2F7"}}>
+              <span style={{fontSize:20}}>{fileIcon(f.name)}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                <div style={{fontSize:11,color:"#8E8E93"}}>{fmtBytes(f.size)}</div>
+              </div>
+              <button onClick={()=>onChange(files.filter(x=>x.id!==f.id))} style={{background:"none",border:"none",color:"#FF3B30",cursor:"pointer",fontSize:18,lineHeight:1}}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── File List (read-only with download) ───────────────────────────────────────
+function FileList({files}) {
+  if(!files||files.length===0) return null;
+  const dl = f=>{const a=document.createElement("a");a.href=f.data;a.download=f.name;a.click();};
+  return(
+    <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:6}}>
+      <div style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Attached Files ({files.length})</div>
+      {files.map(f=>{
+        const isImg = f.type&&f.type.startsWith("image/");
+        const c = fileColor(f.name);
+        return(
+          <div key={f.id} style={{background:"#F9F9FB",border:"1px solid #F2F2F7",borderRadius:10,overflow:"hidden"}}>
+            {isImg&&<img src={f.data} alt={f.name} style={{width:"100%",maxHeight:180,objectFit:"cover",display:"block"}} />}
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px"}}>
+              <span style={{fontSize:20}}>{fileIcon(f.name)}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.name}</div>
+                <div style={{fontSize:11,color:"#8E8E93"}}>{fmtBytes(f.size)} · {f.uploadedAt}</div>
+              </div>
+              <button onClick={()=>dl(f)} style={{background:c+"14",border:"1px solid "+c+"30",color:c,padding:"5px 12px",borderRadius:7,cursor:"pointer",fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>⬇ Download</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Add Material Modal ────────────────────────────────────────────────────────
+function AddMaterialModal({onClose, onAdd, allTesters}) {
+  const [f,setF]=useState({name:"",composition:"",form:"",created_by:"",status:"Synthesized",tags:"",notes:""});
+  const [files,setFiles]=useState([]);
+  const [busy,setBusy]=useState(false);
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+  const ok=f.name&&f.created_by;
+  const submit=async()=>{
+    if(!ok)return; setBusy(true);
+    await onAdd({id:"MAT-"+uid(),...f,created_at:today(),tags:f.tags.split(",").map(t=>t.trim()).filter(Boolean),files});
+    setBusy(false); onClose();
+  };
+  return(
+    <Modal title="Register New Material" wide onClose={onClose}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <div style={{gridColumn:"1/-1"}}>
+          <Field label="Material Name" required><input style={S.inp} placeholder="e.g. Ti-6Al-4V Alloy" value={f.name} onChange={e=>set("name",e.target.value)} /></Field>
+        </div>
+        <Field label="Composition / Formula"><input style={S.inp} placeholder="e.g. Ti 90%, Al 6%, V 4%" value={f.composition} onChange={e=>set("composition",e.target.value)} /></Field>
+        <Field label="Physical Form"><input style={S.inp} placeholder="e.g. Powder, Rod, Film" value={f.form} onChange={e=>set("form",e.target.value)} /></Field>
+        <Field label="Created By" required>
+          <select style={S.inp} value={f.created_by} onChange={e=>set("created_by",e.target.value)}>
+            <option value="">— Select —</option>
+            {allTesters.map(m=><option key={m}>{m}</option>)}
+          </select>
+        </Field>
+        <Field label="Status">
+          <select style={S.inp} value={f.status} onChange={e=>set("status",e.target.value)}>
+            {STATUS_OPTS.map(s=><option key={s}>{s}</option>)}
+          </select>
+        </Field>
+        <div style={{gridColumn:"1/-1"}}>
+          <Field label="Tags (comma-separated)"><input style={S.inp} placeholder="e.g. aerospace, titanium" value={f.tags} onChange={e=>set("tags",e.target.value)} /></Field>
+        </div>
+        <div style={{gridColumn:"1/-1"}}>
+          <Field label="Notes"><textarea style={{...S.inp,resize:"vertical",minHeight:72}} placeholder="Synthesis conditions, batch info…" value={f.notes} onChange={e=>set("notes",e.target.value)} /></Field>
+        </div>
+        <div style={{gridColumn:"1/-1"}}>
+          <Field label="Attach Files" hint="Upload datasheets, images, reference documents">
+            <FileZone files={files} onChange={setFiles} />
+          </Field>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}>
+        <button onClick={onClose} style={{border:"1px solid #D2D2D7",background:"#fff",color:"#1D1D1F",padding:"10px 22px",borderRadius:10,cursor:"pointer",fontSize:15}}>Cancel</button>
+        <button onClick={submit} disabled={!ok||busy} style={{background:ok&&!busy?"#0071E3":"#D1D1D6",border:"none",color:"#fff",padding:"10px 26px",borderRadius:10,cursor:ok&&!busy?"pointer":"not-allowed",fontSize:15,fontWeight:600}}>
+          {busy?"Saving…":"Register Material"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Add Test Modal ────────────────────────────────────────────────────────────
+function AddTestModal({material, onClose, onAdd, customTests, addCustomTest, allTesters, addCustomTester, customOutcomes, addCustomOutcome}) {
+  const [f,setF]=useState({type:"",tester:"",date:today(),result:"",outcome:"Pass",notes:""});
+  const [files,setFiles]=useState([]);
+  const [busy,setBusy]=useState(false);
+  const set=(k,v)=>setF(p=>({...p,[k]:v}));
+
+  const allTypes  = [...BUILT_IN_TESTS, ...customTests.map(t=>({id:"c_"+t.id,label:t.label,category:"Custom",color:"#6E6E73"}))];
+  const allCats   = [...new Set(allTypes.map(t=>t.category))];
+  const allOuts   = [...Object.keys(OUTCOME_COLORS), ...customOutcomes];
+  const meta      = f.type ? allTypes.find(t=>t.id===f.type) : null;
+  const ok        = f.type && f.tester && f.result;
+
+  const submit=async()=>{
+    if(!ok)return; setBusy(true);
+    await onAdd({id:uid(),material_id:material.id,type:f.type,type_label:meta?meta.label:f.type,tester:f.tester,date:f.date,result:f.result,outcome:f.outcome,notes:f.notes,files});
+    setBusy(false); onClose();
+  };
+
+  return(
+    <Modal title={"Log Test — "+material.name} wide onClose={onClose}>
+
+      <Field label="Test Type" required hint="Not in the list? Click '+ Add new' to create a custom type">
+        <select style={S.inp} value={f.type} onChange={e=>set("type",e.target.value)}>
+          <option value="">Select test type</option>
+          {allCats.map(cat=>(
+            <optgroup key={cat} label={cat}>
+              {allTypes.filter(t=>t.category===cat).map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
+            </optgroup>
+          ))}
+        </select>
+        <AddNew placeholder="e.g. FTIR, Nanoindentation, BET Surface Area…" color="#0071E3"
+          onAdd={label=>{const id=label.toLowerCase().replace(/\s+/g,"_")+"_"+uid();addCustomTest({id,label,category:"Custom"});set("type","c_"+id);}} />
+        {meta&&<div style={{marginTop:8,background:meta.color+"0D",border:"1px solid "+meta.color+"30",borderRadius:8,padding:"8px 12px",display:"flex",alignItems:"center",gap:8}}>
+          <div style={{width:8,height:8,borderRadius:"50%",background:meta.color}} />
+          <span style={{fontSize:13,color:meta.color,fontWeight:600}}>{meta.label}</span>
+          <span style={{fontSize:12,color:"#8E8E93"}}>· {meta.category}</span>
+        </div>}
+      </Field>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+        <Field label="Tested By" required hint="Add a name if not listed">
+          <select style={S.inp} value={f.tester} onChange={e=>set("tester",e.target.value)}>
+            <option value="">Select</option>
+            {allTesters.map(m=><option key={m}>{m}</option>)}
+          </select>
+          <AddNew placeholder="e.g. Dr. Kim, Visiting Researcher…" color="#9B5DE5" onAdd={n=>{addCustomTester(n);set("tester",n);}} />
+        </Field>
+        <Field label="Date"><input type="date" style={S.inp} value={f.date} onChange={e=>set("date",e.target.value)} /></Field>
+      </div>
+
+      <Field label="Result Summary" required>
+        <textarea style={{...S.inp,resize:"vertical",minHeight:88}} placeholder="Key measurements and findings…" value={f.result} onChange={e=>set("result",e.target.value)} />
+      </Field>
+
+      <Field label="Outcome" hint="Add custom outcomes with '+ Add new'">
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {allOuts.map(s=>{const c=OUTCOME_COLORS[s]||"#6E6E73",sel=f.outcome===s;return(
+            <button key={s} onClick={()=>set("outcome",s)} style={{padding:"8px 16px",borderRadius:10,border:"2px solid "+(sel?c:"#E5E5EA"),background:sel?c+"14":"#fff",color:sel?c:"#6E6E73",cursor:"pointer",fontWeight:600,fontSize:14,transition:"all .12s",whiteSpace:"nowrap"}}>{s}</button>
+          );})}
+        </div>
+        <AddNew placeholder="e.g. Partial Success, Reference Only…" color="#FF9500" onAdd={o=>{addCustomOutcome(o);set("outcome",o);}} />
+      </Field>
+
+      <Field label="Notes"><textarea style={{...S.inp,resize:"vertical",minHeight:60}} placeholder="Equipment settings, conditions, sample prep…" value={f.notes} onChange={e=>set("notes",e.target.value)} /></Field>
+      <Field label="Attach Files" hint="Upload raw data, SEM images, XRD patterns, Excel sheets, etc.">
+        <FileZone files={files} onChange={setFiles} />
+      </Field>
+
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}>
+        <button onClick={onClose} style={{border:"1px solid #D2D2D7",background:"#fff",color:"#1D1D1F",padding:"10px 22px",borderRadius:10,cursor:"pointer",fontSize:15}}>Cancel</button>
+        <button onClick={submit} disabled={!ok||busy} style={{background:ok&&!busy?"#0071E3":"#D1D1D6",border:"none",color:"#fff",padding:"10px 26px",borderRadius:10,cursor:ok&&!busy?"pointer":"not-allowed",fontSize:15,fontWeight:600}}>
+          {busy?"Saving…":"Log Test"}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Smart Search Bar ──────────────────────────────────────────────────────────
+function SearchBar({materials, value, onChange}) {
+  const [focused,setFocused]=useState(false);
+  const sugs = value.length>=2
+    ? materials.map(m=>({...m,score:searchScore(m,value).score})).filter(m=>m.score>0.15).sort((a,b)=>b.score-a.score).slice(0,5)
+    : [];
+  return(
+    <div style={{flex:1,minWidth:220,position:"relative"}}>
+      <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",color:"#8E8E93",fontSize:16,pointerEvents:"none"}}>🔍</span>
+      <input style={{...S.inp,paddingLeft:40}} placeholder="Search — name, ID, composition, tag, tester…" value={value}
+        onChange={e=>onChange(e.target.value)} onFocus={()=>setFocused(true)} onBlur={()=>setTimeout(()=>setFocused(false),150)} />
+      {value&&<button onClick={()=>onChange("")} style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"#E5E5EA",border:"none",borderRadius:"50%",width:20,height:20,cursor:"pointer",fontSize:12,color:"#6E6E73"}}>×</button>}
+      {focused&&sugs.length>0&&(
+        <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,right:0,background:"#fff",border:"1px solid #E5E5EA",borderRadius:12,boxShadow:"0 8px 32px rgba(0,0,0,0.12)",zIndex:50,overflow:"hidden"}}>
+          <div style={{padding:"8px 14px 4px",fontSize:11,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.06em"}}>Suggestions</div>
+          {sugs.map(m=>(
+            <div key={m.id} className="hover-bg" onClick={()=>{onChange(m.name);setFocused(false);}}
+              style={{padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,background:"#fff",transition:"background .1s"}}>
+              <div style={{width:8,height:8,borderRadius:"50%",background:STATUS_COLORS[m.status]||"#999",flexShrink:0}} />
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:14,fontWeight:600,color:"#1D1D1F"}}>{m.name}</div>
+                <div style={{fontSize:12,color:"#8E8E93"}}>{m.id} · {m.composition||m.form||""}</div>
+              </div>
+              <span style={{fontSize:11,color:"#C7C7CC"}}>{Math.round(m.score*100)}% match</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Material Detail Page ──────────────────────────────────────────────────────
+function DetailPage({mat, onBack, onAddTest, onStatusChange, customTests, addCustomTest, allTesters, addCustomTester, customOutcomes, addCustomOutcome}) {
+  const [showTest,setShowTest]=useState(false);
+  const tests=mat.tests||[];
+  const passes=tests.filter(t=>(t.outcome||t.status)==="Pass").length;
+  const fails=tests.filter(t=>["Fail","Fail / Anomaly"].includes(t.outcome||t.status)).length;
+  const fileCount=(mat.files||[]).length+tests.reduce((a,t)=>a+(t.files||[]).length,0);
+
+  return(
+    <div className="fadeIn">
+      {showTest&&<AddTestModal material={mat} onClose={()=>setShowTest(false)} onAdd={async t=>{await onAddTest(t);setShowTest(false);}}
+        customTests={customTests} addCustomTest={addCustomTest} allTesters={allTesters} addCustomTester={addCustomTester}
+        customOutcomes={customOutcomes} addCustomOutcome={addCustomOutcome} />}
+
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"flex-start",gap:16,marginBottom:32}}>
+        <button onClick={onBack} style={{border:"1px solid #D2D2D7",background:"#fff",color:"#1D1D1F",padding:"8px 16px",borderRadius:10,cursor:"pointer",fontSize:14,fontWeight:500,marginTop:3,whiteSpace:"nowrap"}}>← Back</button>
+        <div style={{flex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:13,color:"#6E6E73",fontWeight:600}}>{mat.id}</span>
+            <StatusPill status={mat.status} />
+            {fileCount>0&&<Pill color="#9B5DE5">📎 {fileCount} file{fileCount!==1?"s":""}</Pill>}
+          </div>
+          <h2 style={{margin:0,fontSize:28,fontWeight:700,color:"#1D1D1F",letterSpacing:"-0.03em"}}>{mat.name}</h2>
+          {mat.composition&&<p style={{margin:"6px 0 0",fontSize:15,color:"#6E6E73"}}>{mat.composition}{mat.form?" · "+mat.form:""}</p>}
+        </div>
+        <button onClick={()=>setShowTest(true)} style={{background:"#0071E3",border:"none",color:"#fff",padding:"10px 22px",borderRadius:12,cursor:"pointer",fontSize:15,fontWeight:600,whiteSpace:"nowrap"}}>+ Log Test</button>
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:24,alignItems:"start"}}>
+        {/* Left: tests */}
+        <div>
+          {mat.files&&mat.files.length>0&&(
+            <div style={{background:"#fff",border:"1px solid #F2F2F7",borderRadius:14,padding:"18px 20px",marginBottom:16,boxShadow:"0 1px 4px rgba(0,0,0,.04)"}}>
+              <div style={{fontSize:14,fontWeight:700,color:"#1D1D1F",marginBottom:8}}>Material Documents</div>
+              <FileList files={mat.files} />
+            </div>
+          )}
+          <div style={{fontSize:13,fontWeight:600,color:"#6E6E73",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:14}}>Test History ({tests.length})</div>
+          {tests.length===0?(
+            <div style={{textAlign:"center",padding:"64px 20px",background:"#F9F9FB",borderRadius:16,border:"1.5px dashed #D1D1D6"}}>
+              <div style={{fontSize:40,marginBottom:12}}>🧪</div>
+              <div style={{fontSize:17,fontWeight:600,color:"#1D1D1F"}}>No tests yet</div>
+              <div style={{fontSize:14,color:"#6E6E73",marginTop:6}}>Click "Log Test" to record the first result</div>
+            </div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:12}}>
+              {[...tests].reverse().map(t=>{
+                const m=getMeta(t.type);
+                const lbl=t.type_label||m.label;
+                const oc=t.outcome||t.status||"Pass";
+                const oc_color=OUTCOME_COLORS[oc]||"#6E6E73";
+                return(
+                  <div key={t.id} style={{background:"#fff",border:"1px solid #F2F2F7",borderRadius:14,padding:"18px 20px",boxShadow:"0 1px 4px rgba(0,0,0,.04)",borderLeft:"4px solid "+m.color}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:10}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <div style={{width:32,height:32,background:m.color+"12",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                          <span style={{fontSize:12,color:m.color,fontWeight:800}}>{lbl.slice(0,2).toUpperCase()}</span>
+                        </div>
+                        <div>
+                          <div style={{fontWeight:700,fontSize:15,color:"#1D1D1F"}}>{lbl}</div>
+                          <div style={{fontSize:12,color:"#6E6E73"}}>{m.category}</div>
+                        </div>
+                      </div>
+                      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                        {(t.files||[]).length>0&&<Pill color="#9B5DE5">📎 {t.files.length}</Pill>}
+                        <Pill color={oc_color}>{oc}</Pill>
+                      </div>
+                    </div>
+                    <p style={{margin:"0 0 10px",fontSize:14,color:"#3A3A3C",lineHeight:1.6}}>{t.result}</p>
+                    {t.notes&&<p style={{margin:"0 0 10px",fontSize:13,color:"#8E8E93",fontStyle:"italic"}}>{t.notes}</p>}
+                    <FileList files={t.files||[]} />
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10}}>
+                      <Avatar name={t.tester} size={22} />
+                      <span style={{fontSize:13,color:"#6E6E73"}}>{t.tester}</span>
+                      <span style={{color:"#C7C7CC"}}>|</span>
+                      <span style={{fontSize:13,color:"#6E6E73"}}>{t.date} · {timeAgo(t.date)}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Right: sidebar */}
+        <div style={{display:"flex",flexDirection:"column",gap:16}}>
+          <div style={{background:"#F9F9FB",borderRadius:14,padding:18}}>
+            <div style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:14}}>Summary</div>
+            {[["Tests run",tests.length],["Passed",passes],["Failed",fails],["Files",fileCount],["Added by",(mat.created_by||"").split(" ")[0]],["Date",mat.created_at]].map(([k,v])=>(
+              <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid #EBEBF0",fontSize:14}}>
+                <span style={{color:"#6E6E73"}}>{k}</span><span style={{fontWeight:600,color:"#1D1D1F"}}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{background:"#F9F9FB",borderRadius:14,padding:18}}>
+            <div style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Update Status</div>
+            <select style={{...S.inp,fontSize:14}} value={mat.status} onChange={e=>onStatusChange(mat.id,e.target.value)}>
+              {STATUS_OPTS.map(s=><option key={s}>{s}</option>)}
+            </select>
+          </div>
+          {mat.tags&&mat.tags.length>0&&(
+            <div style={{background:"#F9F9FB",borderRadius:14,padding:18}}>
+              <div style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>Tags</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{mat.tags.map(t=><Pill key={t} color="#0071E3">#{t}</Pill>)}</div>
+            </div>
+          )}
+          {mat.notes&&(
+            <div style={{background:"#F9F9FB",borderRadius:14,padding:18}}>
+              <div style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Lab Notes</div>
+              <p style={{margin:0,fontSize:14,color:"#3A3A3C",lineHeight:1.7}}>{mat.notes}</p>
+            </div>
+          )}
+          {tests.length>0&&(
+            <div style={{background:"#F9F9FB",borderRadius:14,padding:18}}>
+              <div style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>Tested By</div>
+              {[...new Set(tests.map(t=>t.tester))].map(n=>(
+                <div key={n} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <Avatar name={n} size={26} /><span style={{fontSize:14,color:"#1D1D1F"}}>{n}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── MAIN APP ──────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+function App() {
+  const [materials,setMaterials] = useState([]);
+  const [loading,setLoading]     = useState(true);
+  const [dbError,setDbError]     = useState(null);
+  const [syncing,setSyncing]     = useState(false);
+
+  const [view,setView]           = useState("library"); // library | detail | activity | team
+  const [selId,setSelId]         = useState(null);
+  const [showAdd,setShowAdd]     = useState(false);
+  const [search,setSearch]       = useState("");
+  const [fStatus,setFStatus]     = useState("All");
+  const [fMember,setFMember]     = useState("All");
+
+  // Custom lists (shared via Supabase custom_lists table)
+  const [cTests,setCTests]       = useState([]);
+  const [cTesters,setCTesters]   = useState([]);
+  const [cOutcomes,setCOutcomes] = useState([]);
+
+  const allTesters = [...TEAM, ...cTesters];
+
+  // ── Load ──────────────────────────────────────────────────────────────────
+  const load = async (quiet=false) => {
+    try {
+      if(!quiet) setLoading(true);
+      setDbError(null);
+      const [mats, tests, lists] = await Promise.all([
+        sb.get("materials?order=created_at.desc"),
+        sb.get("tests?order=date.asc"),
+        sb.get("custom_lists"),
+      ]);
+      const merged = (mats||[]).map(m=>({...m, tests:(tests||[]).filter(t=>t.material_id===m.id)}));
+      setMaterials(merged);
+      (lists||[]).forEach(row=>{
+        if(row.key==="testTypes") setCTests(row.value||[]);
+        if(row.key==="testers")   setCTesters(row.value||[]);
+        if(row.key==="outcomes")  setCOutcomes(row.value||[]);
+      });
+    } catch(e) {
+      setDbError(e.message||"Connection failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(()=>{ load(); },[]);
+  // Auto-refresh every 15 seconds
+  useEffect(()=>{ const t=setInterval(()=>load(true),15000); return()=>clearInterval(t); },[]);
+
+  // ── Custom list helpers ───────────────────────────────────────────────────
+  const saveList = async(key,value)=> sb.patch("custom_lists?key=eq."+key,{value});
+
+  const addCTest = async t=>{ const u=cTests.some(x=>x.id===t.id)?cTests:[...cTests,t]; setCTests(u); await saveList("testTypes",u); };
+  const addCTester=async n=>{ const u=cTesters.includes(n)?cTesters:[...cTesters,n]; setCTesters(u); await saveList("testers",u); };
+  const addCOutcome=async o=>{ const u=cOutcomes.includes(o)?cOutcomes:[...cOutcomes,o]; setCOutcomes(u); await saveList("outcomes",u); };
+
+  // ── CRUD ──────────────────────────────────────────────────────────────────
+  const addMaterial = async mat=>{
+    setSyncing(true);
+    const {tests,...row}=mat;
+    await sb.post("materials",row);
+    await load(true);
+    setSyncing(false);
+  };
+
+  const addTest = async test=>{
+    setSyncing(true);
+    await sb.post("tests",test);
+    await load(true);
+    setSyncing(false);
+  };
+
+  const updateStatus = async(id,status)=>{
+    setSyncing(true);
+    await sb.patch("materials?id=eq."+id,{status});
+    setMaterials(p=>p.map(m=>m.id===id?{...m,status}:m));
+    setSyncing(false);
+  };
+
+  // ── Derived data ──────────────────────────────────────────────────────────
+  const selected = materials.find(m=>m.id===selId);
+  const filtered = materials
+    .map(m=>({...m,...searchScore(m,search)}))
+    .filter(m=>m.match&&(fStatus==="All"||m.status===fStatus)&&(fMember==="All"||m.created_by===fMember||(m.tests||[]).some(t=>t.tester===fMember)))
+    .sort((a,b)=>b.score-a.score);
+
+  const totalTests  = materials.reduce((a,m)=>a+(m.tests||[]).length,0);
+  const totalFiles  = materials.reduce((a,m)=>a+(m.files||[]).length+(m.tests||[]).reduce((b,t)=>b+(t.files||[]).length,0),0);
+  const needsRetest = materials.filter(m=>m.status==="Needs Retest").length;
+  const activity    = materials.flatMap(m=>(m.tests||[]).map(t=>({...t,matName:m.name,matId:m.id}))).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,10);
+
+  const NAV = [{id:"library",label:"Materials"},{id:"activity",label:"Activity"},{id:"team",label:"Team"}];
+
+  // ── Not configured screen ─────────────────────────────────────────────────
+  const notConfigured = SUPABASE_URL.includes("YOUR_PROJECT");
+
+  return(
+    <div style={{minHeight:"100vh",background:"#F5F5F7",fontFamily:"'Inter',-apple-system,BlinkMacSystemFont,sans-serif",color:"#1D1D1F"}}>
+
+      {/* ── Navbar ── */}
+      <nav style={{background:"rgba(255,255,255,0.88)",backdropFilter:"saturate(180%) blur(20px)",borderBottom:"1px solid rgba(0,0,0,0.08)",position:"sticky",top:0,zIndex:200}}>
+        <div style={{maxWidth:1160,margin:"0 auto",padding:"0 24px",display:"flex",alignItems:"center",height:52,gap:4}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginRight:28}}>
+            <div style={{width:26,height:26,background:"#0071E3",borderRadius:7,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:14,fontWeight:800}}>M</div>
+            <span style={{fontSize:17,fontWeight:700,letterSpacing:"-0.02em"}}>Mat<span style={{color:"#0071E3"}}>Track</span></span>
+          </div>
+          {NAV.map(n=>(
+            <button key={n.id} className="nav-btn" onClick={()=>setView(n.id)}
+              style={{background:view===n.id?"#F2F2F7":"none",border:"none",color:view===n.id?"#1D1D1F":"#6E6E73",padding:"5px 14px",borderRadius:8,cursor:"pointer",fontSize:14,fontWeight:500,transition:"all .15s"}}>
+              {n.label}
+            </button>
+          ))}
+          <div style={{flex:1}} />
+          {/* Sync indicator */}
+          <div style={{display:"flex",alignItems:"center",gap:6,marginRight:16,fontSize:12,color:syncing?"#FF9500":"#34C759"}}>
+            {syncing
+              ? <div className="spin" style={{width:8,height:8,border:"2px solid #FF950040",borderTop:"2px solid #FF9500",borderRadius:"50%"}} />
+              : <span style={{width:7,height:7,borderRadius:"50%",background:"#34C759",display:"inline-block",boxShadow:"0 0 0 3px #34C75920"}} />
+            }
+            <span>{syncing?"Saving…":"Live — shared with team"}</span>
+          </div>
+          <button onClick={()=>setShowAdd(true)} style={{background:"#0071E3",border:"none",color:"#fff",padding:"7px 18px",borderRadius:10,cursor:"pointer",fontSize:14,fontWeight:600}}>+ New Material</button>
+        </div>
+      </nav>
+
+      {/* ── Setup needed banner ── */}
+      {notConfigured&&(
+        <div style={{background:"#FFF7EA",borderBottom:"1px solid #FFEAA0",padding:"14px 24px",textAlign:"center",fontSize:14,color:"#92400E"}}>
+          ⚠️ <strong>Setup needed:</strong> Open this HTML file, find lines 82–83 near the top, and replace <code style={{background:"#FEF3C7",padding:"1px 5px",borderRadius:4}}>YOUR_PROJECT</code> and <code style={{background:"#FEF3C7",padding:"1px 5px",borderRadius:4}}>sb_publishable_-EdBe5Kd82rlvEg-vF6J6A_0T9cIJTw</code> with your Supabase credentials.
+        </div>
+      )}
+
+      {/* ── Loading ── */}
+      {loading&&(
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"60vh",gap:16}}>
+          <div className="spin" style={{width:40,height:40,border:"3px solid #F2F2F7",borderTop:"3px solid #0071E3",borderRadius:"50%"}} />
+          <div style={{fontSize:15,color:"#6E6E73"}}>Connecting to shared database…</div>
+        </div>
+      )}
+
+      {/* ── DB Error ── */}
+      {!loading&&dbError&&(
+        <div style={{maxWidth:600,margin:"60px auto",padding:"0 24px",textAlign:"center"}}>
+          <div style={{fontSize:40,marginBottom:16}}>⚠️</div>
+          <div style={{fontSize:20,fontWeight:700,marginBottom:8}}>Cannot connect to database</div>
+          <div style={{background:"#F9F9FB",border:"1px solid #F2F2F7",borderRadius:14,padding:20,textAlign:"left",fontSize:14,color:"#3A3A3C",lineHeight:1.9,marginBottom:20}}>
+            <strong>To fix:</strong><br/>
+            1. Open <code style={{background:"#F2F2F7",padding:"1px 6px",borderRadius:4}}>mattrack.html</code> in a text editor<br/>
+            2. Find lines 82–83 near the top<br/>
+            3. Replace <code style={{background:"#F2F2F7",padding:"1px 6px",borderRadius:4}}>YOUR_PROJECT</code> with your Supabase Project URL<br/>
+            4. Replace <code style={{background:"#F2F2F7",padding:"1px 6px",borderRadius:4}}>sb_publishable_-EdBe5Kd82rlvEg-vF6J6A_0T9cIJTw</code> with your anon public key<br/>
+            5. Save the file and push to GitHub
+          </div>
+          <button onClick={()=>load()} style={{background:"#0071E3",border:"none",color:"#fff",padding:"10px 24px",borderRadius:10,cursor:"pointer",fontSize:15,fontWeight:600}}>↺ Try Again</button>
+        </div>
+      )}
+
+      {/* ── Main content ── */}
+      {!loading&&!dbError&&(
+        <main style={{maxWidth:1160,margin:"0 auto",padding:"36px 24px"}}>
+
+          {/* DETAIL */}
+          {view==="detail"&&selected&&(
+            <DetailPage mat={selected} onBack={()=>setView("library")}
+              onAddTest={addTest} onStatusChange={updateStatus}
+              customTests={cTests} addCustomTest={addCTest}
+              allTesters={allTesters} addCustomTester={addCTester}
+              customOutcomes={cOutcomes} addCustomOutcome={addCOutcome} />
+          )}
+
+          {/* LIBRARY */}
+          {view==="library"&&(
+            <div className="fadeIn">
+              <div style={{marginBottom:28}}>
+                <h1 style={{fontSize:32,fontWeight:700,letterSpacing:"-0.03em",marginBottom:4}}>Materials Library</h1>
+                <p style={{fontSize:15,color:"#6E6E73"}}>All materials are shared live across the team. Search by name, composition, tag, tester — or type something close.</p>
+              </div>
+
+              {/* Stats */}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:14,marginBottom:28}}>
+                {[{l:"Total Materials",v:materials.length,c:"#0071E3"},{l:"Tests Logged",v:totalTests,c:"#34C759"},{l:"Files Stored",v:totalFiles,c:"#9B5DE5"},{l:"Needs Retest",v:needsRetest,c:"#FF9500"}].map(s=>(
+                  <div key={s.l} className="stat-card" style={{background:"#fff",borderRadius:14,padding:"18px 20px",border:"1px solid #F2F2F7",boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
+                    <div style={{fontSize:30,fontWeight:700,color:s.c,letterSpacing:"-0.02em"}}>{s.v}</div>
+                    <div style={{fontSize:13,color:"#6E6E73",marginTop:4,fontWeight:500}}>{s.l}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Search + filters */}
+              <div style={{display:"flex",gap:10,marginBottom:14,flexWrap:"wrap",alignItems:"flex-start"}}>
+                <SearchBar materials={materials} value={search} onChange={setSearch} />
+                <select style={{...S.inp,width:"auto",minWidth:160}} value={fStatus} onChange={e=>setFStatus(e.target.value)}>
+                  <option value="All">All Statuses</option>
+                  {STATUS_OPTS.map(s=><option key={s}>{s}</option>)}
+                </select>
+                <select style={{...S.inp,width:"auto",minWidth:190}} value={fMember} onChange={e=>setFMember(e.target.value)}>
+                  <option value="All">All Team Members</option>
+                  {allTesters.map(m=><option key={m}>{m}</option>)}
+                </select>
+                <button onClick={()=>load(true)} style={{background:"#F2F2F7",border:"none",color:"#6E6E73",padding:"10px 16px",borderRadius:10,cursor:"pointer",fontSize:14,fontWeight:500,whiteSpace:"nowrap"}}>↺ Refresh</button>
+              </div>
+              {search&&(
+                <div style={{marginBottom:14,fontSize:13,color:"#6E6E73",display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{background:"#EAF3FF",color:"#0071E3",padding:"2px 8px",borderRadius:6,fontWeight:600,fontSize:12}}>Smart Search</span>
+                  {filtered.length>0?`Found ${filtered.length} result${filtered.length!==1?"s":""} — sorted by relevance`:"No matches — try different keywords"}
+                </div>
+              )}
+
+              {/* Table */}
+              <div style={{background:"#fff",borderRadius:16,border:"1px solid #F2F2F7",boxShadow:"0 2px 8px rgba(0,0,0,.04)",overflow:"hidden"}}>
+                <div style={{display:"grid",gridTemplateColumns:"90px 1fr 140px 180px 60px 60px 100px",padding:"10px 20px",background:"#F9F9FB",borderBottom:"1px solid #F2F2F7",fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.05em"}}>
+                  <span>ID</span><span>Material</span><span>Status</span><span>Created By</span><span>Tests</span><span>Files</span><span>Last Test</span>
+                </div>
+                {filtered.length===0?(
+                  <div style={{textAlign:"center",padding:"64px 20px",color:"#8E8E93"}}>
+                    <div style={{fontSize:40,marginBottom:12}}>🔬</div>
+                    <div style={{fontSize:17,fontWeight:600,color:"#1D1D1F",marginBottom:6}}>{search?"No materials found":"No materials yet"}</div>
+                    <div style={{fontSize:14}}>{search?"Try different search terms":"Click '+ New Material' to get started"}</div>
+                  </div>
+                ):filtered.map((m,i)=>{
+                  const last=(m.tests||[]).length>0?m.tests[m.tests.length-1]:null;
+                  const anomaly=(m.tests||[]).some(t=>["Fail","Fail / Anomaly"].includes(t.outcome||t.status));
+                  const fc=(m.files||[]).length+(m.tests||[]).reduce((a,t)=>a+(t.files||[]).length,0);
+                  return(
+                    <div key={m.id} className="mat-row" onClick={()=>{setSelId(m.id);setView("detail");}}
+                      style={{display:"grid",gridTemplateColumns:"90px 1fr 140px 180px 60px 60px 100px",padding:"14px 20px",borderBottom:i<filtered.length-1?"1px solid #F9F9FB":"none",background:"#fff",transition:"background .12s",alignItems:"center"}}>
+                      <span style={{fontSize:12,fontWeight:600,color:"#0071E3"}}>{m.id}</span>
+                      <div>
+                        <div style={{fontWeight:600,fontSize:15,color:"#1D1D1F",marginBottom:5}}>{m.name}</div>
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                          {m.form&&<span style={{fontSize:12,color:"#8E8E93"}}>{m.form}</span>}
+                          {(m.tags||[]).slice(0,2).map(t=><Pill key={t} color="#0071E3">#{t}</Pill>)}
+                          {anomaly&&<Pill color="#FF3B30">⚠ anomaly</Pill>}
+                        </div>
+                      </div>
+                      <StatusPill status={m.status} />
+                      <div style={{display:"flex",alignItems:"center",gap:8}}>
+                        <Avatar name={m.created_by} size={24} />
+                        <span style={{fontSize:13,color:"#3A3A3C"}}>{(m.created_by||"").split(" ")[0]}</span>
+                      </div>
+                      <div style={{textAlign:"center"}}>
+                        <span style={{fontSize:15,fontWeight:700,color:(m.tests||[]).length>0?"#1D1D1F":"#C7C7CC"}}>{(m.tests||[]).length}</span>
+                      </div>
+                      <div style={{textAlign:"center"}}>
+                        <span style={{fontSize:14,color:fc>0?"#9B5DE5":"#C7C7CC",fontWeight:600}}>{fc>0?"📎"+fc:"—"}</span>
+                      </div>
+                      <span style={{fontSize:13,color:"#6E6E73"}}>{last?timeAgo(last.date):"—"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {filtered.length>0&&<div style={{padding:"12px 4px",fontSize:13,color:"#8E8E93"}}>Showing {filtered.length} of {materials.length} materials</div>}
+            </div>
+          )}
+
+          {/* ACTIVITY */}
+          {view==="activity"&&(
+            <div className="fadeIn">
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                <h1 style={{fontSize:32,fontWeight:700,letterSpacing:"-0.03em"}}>Recent Activity</h1>
+                <button onClick={()=>load(true)} style={{background:"#F2F2F7",border:"none",color:"#6E6E73",padding:"7px 16px",borderRadius:8,cursor:"pointer",fontSize:13,fontWeight:500}}>↺ Refresh</button>
+              </div>
+              <p style={{fontSize:15,color:"#6E6E73",marginBottom:28}}>Latest test entries from the whole team. Auto-updates every 15 seconds.</p>
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {activity.length===0&&<div style={{textAlign:"center",padding:64,color:"#8E8E93"}}>No tests logged yet.</div>}
+                {activity.map(item=>{
+                  const m=getMeta(item.type);
+                  const lbl=item.type_label||m.label;
+                  const oc=item.outcome||item.status||"Pass";
+                  const oc_c=OUTCOME_COLORS[oc]||"#6E6E73";
+                  const fc=(item.files||[]).length;
+                  return(
+                    <div key={item.id} style={{background:"#fff",border:"1px solid #F2F2F7",borderRadius:14,padding:"16px 20px",boxShadow:"0 1px 4px rgba(0,0,0,.04)",display:"flex",gap:14,alignItems:"flex-start"}}>
+                      <div style={{width:40,height:40,background:m.color+"14",borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                        <span style={{fontSize:13,color:m.color,fontWeight:800}}>{lbl.slice(0,2).toUpperCase()}</span>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{marginBottom:6,fontSize:15,lineHeight:1.5}}>
+                          <strong>{item.tester}</strong>
+                          <span style={{color:"#6E6E73"}}> logged </span>
+                          <span style={{fontWeight:600,color:m.color}}>{lbl}</span>
+                          <span style={{color:"#6E6E73"}}> on </span>
+                          <span style={{fontWeight:600,color:"#0071E3",cursor:"pointer"}} onClick={()=>{setSelId(item.matId);setView("detail");}}>{item.matName}</span>
+                          <span style={{marginLeft:8}}><Pill color={oc_c}>{oc}</Pill></span>
+                          {fc>0&&<span style={{marginLeft:6}}><Pill color="#9B5DE5">📎{fc}</Pill></span>}
+                        </div>
+                        <div style={{fontSize:14,color:"#3A3A3C",lineHeight:1.5}}>{(item.result||"").slice(0,130)}{(item.result||"").length>130?"…":""}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8}}>
+                          <Avatar name={item.tester} size={20} />
+                          <span style={{fontSize:13,color:"#6E6E73"}}>{item.date} · {timeAgo(item.date)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* TEAM */}
+          {view==="team"&&(
+            <div className="fadeIn">
+              <h1 style={{fontSize:32,fontWeight:700,letterSpacing:"-0.03em",marginBottom:6}}>Team</h1>
+              <p style={{fontSize:15,color:"#6E6E73",marginBottom:28}}>Contributions from each team member.</p>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:16}}>
+                {allTesters.map(name=>{
+                  const created=materials.filter(m=>m.created_by===name).length;
+                  const allT=materials.flatMap(m=>m.tests||[]);
+                  const tested=allT.filter(t=>t.tester===name).length;
+                  const passed=allT.filter(t=>t.tester===name&&(t.outcome==="Pass"||t.status==="Pass")).length;
+                  const recent=allT.filter(t=>t.tester===name).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,3).map(t=>({...t,matName:(materials.find(m=>(m.tests||[]).some(x=>x.id===t.id))||{}).name||""}));
+                  return(
+                    <div key={name} style={{background:"#fff",border:"1px solid #F2F2F7",borderRadius:16,padding:24,boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}>
+                        <Avatar name={name} size={48} />
+                        <div>
+                          <div style={{fontSize:17,fontWeight:700,color:"#1D1D1F"}}>{name}</div>
+                          <div style={{fontSize:13,color:"#8E8E93",marginTop:2}}>Research Team</div>
+                        </div>
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:recent.length>0?20:0}}>
+                        {[["Materials",created,"#0071E3"],["Tests",tested,"#34C759"],["Pass Rate",tested>0?Math.round(passed/tested*100)+"%":"—","#FF9500"]].map(([l,v,c])=>(
+                          <div key={l} style={{background:"#F9F9FB",borderRadius:10,padding:10,textAlign:"center"}}>
+                            <div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div>
+                            <div style={{fontSize:11,color:"#8E8E93",marginTop:3,fontWeight:500}}>{l}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {recent.length>0&&(
+                        <>
+                          <div style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:10}}>Recent Tests</div>
+                          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                            {recent.map(t=>{const meta=getMeta(t.type);const lbl=t.type_label||meta.label;const oc=t.outcome||t.status||"Pass";return(
+                              <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"#F9F9FB",borderRadius:8}}>
+                                <div style={{width:6,height:6,borderRadius:"50%",background:meta.color,flexShrink:0}} />
+                                <div style={{flex:1}}><span style={{fontSize:13,fontWeight:500,color:"#1D1D1F"}}>{lbl}</span>{t.matName&&<span style={{fontSize:12,color:"#8E8E93"}}> · {t.matName}</span>}</div>
+                                <Pill color={OUTCOME_COLORS[oc]||"#6E6E73"}>{oc}</Pill>
+                              </div>
+                            );})}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </main>
+      )}
+
+      {showAdd&&<AddMaterialModal onClose={()=>setShowAdd(false)} onAdd={async m=>{await addMaterial(m);setShowAdd(false);}} allTesters={allTesters} />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
