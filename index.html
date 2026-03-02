@@ -708,7 +708,7 @@ function App(){
   const [cStatuses,setCStatuses] = useState([]);
   const [cMatTypes,setCMatTypes] = useState([]);
 
-  const ADMIN_EMAIL = "nannorymunirech22@gmail.com";
+  const ADMIN_EMAIL = "nannorymunireach22@gmail.com";
   const allTesters  = [...TEAM_STATIC,...cTesters];
 
   // ── Auth init ────────────────────────────────
@@ -754,7 +754,7 @@ function App(){
     setUser(u);
     // Admin bypass — no approval check needed
     const emailLower = (u.email||"").toLowerCase().trim();
-    if (emailLower === "nannorymunirech22@gmail.com") {
+    if (emailLower === "nannorymunireach22@gmail.com") {
       setIsAdmin(true);
       setApproved(true);
       setAuthLoading(false);
@@ -814,7 +814,14 @@ function App(){
   const addContributor = async n => { await addCTester(n); };
 
   // ── CRUD ─────────────────────────────────────
-  const addMaterial=async mat=>{setSyncing(true);const{tests,...row}=mat;await api.post("materials",row,token);await load(true);setSyncing(false);};
+  const addMaterial=async mat=>{
+    setSyncing(true);
+    const {tests, customCreator, customStatus, matType, ...row} = mat;
+    row.mat_type = matType || "";
+    try { await api.post("materials",row,token); } catch(e) { console.error("Save error:",e); alert("Could not save material: "+e.message); }
+    await load(true);
+    setSyncing(false);
+  };
   const addTest=async test=>{setSyncing(true);await api.post("tests",test,token);await load(true);setSyncing(false);};
   const updateStatus=async(id,status)=>{setSyncing(true);await api.patch("materials?id=eq."+id,{status},token);setMaterials(p=>p.map(m=>m.id===id?{...m,status}:m));setSyncing(false);};
   const deleteMaterial=async(id)=>{
