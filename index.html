@@ -531,7 +531,7 @@ function App(){
   const [cTesters,setCTesters] =useState([]);
   const [cOutcomes,setCOutcomes]=useState([]);
 
-  const ADMIN_EMAIL = "nannorymunirech22@gmail.com"; // Admin email
+  const ADMIN_EMAIL = "nannorymunirech22@gmail.com";
   const allTesters  = [...TEAM_STATIC,...cTesters];
 
   // ── Auth init ────────────────────────────────
@@ -543,17 +543,27 @@ function App(){
       const u = await auth.getUser(tok);
       if(!u){ auth.signOut(); return; }
       setUser(u);
-      // Check if admin
-      if(u.email===ADMIN_EMAIL){ setIsAdmin(true); setApproved(true); setAuthLoading(false); return; }
-      // Check approval
+
+      // Admin always gets in — check first before any DB query
+      const emailLower = (u.email||"").toLowerCase().trim();
+      const adminLower = ADMIN_EMAIL.toLowerCase().trim();
+      if(emailLower === adminLower){
+        setIsAdmin(true);
+        setApproved(true);
+        setAuthLoading(false);
+        return;
+      }
+
+      // Non-admin: check allowed_users table
       try{
-        const rows = await api.get(`allowed_users?email=eq.${encodeURIComponent(u.email)}&select=approved`,tok);
-        if(rows&&rows.length>0&&rows[0].approved){ setApproved(true); }
-        else{
-          // Upsert pending entry
-          await api.post("allowed_users",{email:u.email,approved:false},tok).catch(()=>{});
+        const rows = await api.get(`allowed_users?email=eq.${encodeURIComponent(u.email)}&select=approved`, tok);
+        if(rows && rows.length > 0 && rows[0].approved === true){
+          setApproved(true);
+        } else {
+          // Register as pending so admin can see them
+          await api.post("allowed_users", {email:u.email, approved:false}, tok).catch(()=>{});
         }
-      }catch(e){ console.error(e); }
+      }catch(e){ console.error("approval check error:", e); }
       setAuthLoading(false);
     })();
   },[]);
@@ -565,12 +575,19 @@ function App(){
     const u = await auth.getUser(tok);
     if (!u) throw new Error("Could not load user.");
     setUser(u);
-    // Check approval
-    if (u.email === ADMIN_EMAIL) { setIsAdmin(true); setApproved(true); return; }
+    // Admin bypass — no approval check needed
+    const emailLower = (u.email||"").toLowerCase().trim();
+    if (emailLower === "nannorymunirech22@gmail.com") {
+      setIsAdmin(true);
+      setApproved(true);
+      setAuthLoading(false);
+      return;
+    }
+    // Non-admin: check approval
     try {
       const rows = await api.get(`allowed_users?email=eq.${encodeURIComponent(u.email)}&select=approved`, tok);
-      if (rows && rows.length > 0 && rows[0].approved) setApproved(true);
-    } catch(e) {}
+      if (rows && rows.length > 0 && rows[0].approved === true) setApproved(true);
+    } catch(e) { console.error(e); }
     setAuthLoading(false);
   };
 
