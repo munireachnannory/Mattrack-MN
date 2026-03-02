@@ -271,7 +271,7 @@ function LoginPage({onSignIn, onRegister, error}){
             {tab==="register" && (
               <div style={{marginBottom:16}}>
                 <label style={{display:"block",fontSize:13,fontWeight:600,color:"#6E6E73",marginBottom:6}}>Full Name <span style={{color:"#FF3B30"}}>*</span></label>
-                <input style={S.inp} placeholder="e.g. Vivek Chawla" value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} />
+                <input style={S.inp} placeholder="e.g. Munireach Nannory" value={name} onChange={e=>setName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()} />
               </div>
             )}
 
@@ -326,12 +326,125 @@ function PendingPage({user, onSignOut}){
 // ══════════════════════════════════════════════
 // ── ADD MATERIAL MODAL ────────────────────────
 // ══════════════════════════════════════════════
-function AddMaterialModal({onClose,onAdd,allTesters}){
-  const [f,setF]=useState({name:"",composition:"",form:"",created_by:"",status:"Synthesized",tags:"",notes:""});
-  const [files,setFiles]=useState([]);const [busy,setBusy]=useState(false);
-  const set=(k,v)=>setF(p=>({...p,[k]:v}));const ok=f.name&&f.created_by;
-  const submit=async()=>{if(!ok)return;setBusy(true);await onAdd({id:"MAT-"+uid(),...f,created_at:today(),tags:f.tags.split(",").map(t=>t.trim()).filter(Boolean),files});setBusy(false);onClose();};
-  return(<Modal title="Register New Material" wide onClose={onClose}><div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}><div style={{gridColumn:"1/-1"}}><Field label="Material Name" required><input style={S.inp} placeholder="e.g. Ti-6Al-4V Alloy" value={f.name} onChange={e=>set("name",e.target.value)} /></Field></div><Field label="Composition / Formula"><input style={S.inp} placeholder="e.g. Ti 90%, Al 6%, V 4%" value={f.composition} onChange={e=>set("composition",e.target.value)} /></Field><Field label="Physical Form"><input style={S.inp} placeholder="e.g. Powder, Rod, Film" value={f.form} onChange={e=>set("form",e.target.value)} /></Field><Field label="Created By" required><select style={S.inp} value={f.created_by} onChange={e=>set("created_by",e.target.value)}><option value="">— Select —</option>{allTesters.map(m=><option key={m}>{m}</option>)}</select></Field><Field label="Status"><select style={S.inp} value={f.status} onChange={e=>set("status",e.target.value)}>{STATUS_OPTS.map(s=><option key={s}>{s}</option>)}</select></Field><div style={{gridColumn:"1/-1"}}><Field label="Tags (comma-separated)"><input style={S.inp} placeholder="e.g. aerospace, titanium" value={f.tags} onChange={e=>set("tags",e.target.value)} /></Field></div><div style={{gridColumn:"1/-1"}}><Field label="Notes"><textarea style={{...S.inp,resize:"vertical",minHeight:72}} placeholder="Synthesis conditions, batch info…" value={f.notes} onChange={e=>set("notes",e.target.value)} /></Field></div><div style={{gridColumn:"1/-1"}}><Field label="Attach Files" hint="Upload datasheets, images, reference documents"><FileZone files={files} onChange={setFiles} /></Field></div></div><div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}><button onClick={onClose} style={{border:"1px solid #D2D2D7",background:"#fff",color:"#1D1D1F",padding:"10px 22px",borderRadius:10,cursor:"pointer",fontSize:15}}>Cancel</button><button onClick={submit} disabled={!ok||busy} style={{background:ok&&!busy?"#0071E3":"#D1D1D6",border:"none",color:"#fff",padding:"10px 26px",borderRadius:10,cursor:ok&&!busy?"pointer":"not-allowed",fontSize:15,fontWeight:600}}>{busy?"Saving…":"Register Material"}</button></div></Modal>);
+const MATERIAL_TYPES = ["Alloy","Ceramic","Polymer","Composite","Semiconductor","Biomaterial","Coating","Other"];
+const BASE_STATUS_OPTS = ["Synthesized","In Testing","Completed","Needs Retest","Archived"];
+
+function AddMaterialModal({onClose, onAdd, allTesters, customStatuses, onAddCustomStatus, customMatTypes, onAddCustomMatType}){
+  const [f,setF] = useState({name:"",composition:"",form:"",created_by:"",customCreator:"",status:"Synthesized",customStatus:"",matType:"",tags:"",notes:""});
+  const [files,setFiles] = useState([]);
+  const [busy,setBusy]   = useState(false);
+  const set = (k,v) => setF(p=>({...p,[k]:v}));
+
+  const allStatuses  = [...BASE_STATUS_OPTS, ...customStatuses];
+  const allMatTypes  = [...MATERIAL_TYPES,   ...customMatTypes];
+  const finalCreator = f.created_by==="__custom__" ? f.customCreator.trim() : f.created_by;
+  const finalStatus  = f.status==="__custom__"     ? f.customStatus.trim()  : f.status;
+  const ok = f.name && finalCreator;
+
+  const submit = async () => {
+    if(!ok) return;
+    setBusy(true);
+    await onAdd({
+      id: "MAT-"+uid(), ...f,
+      created_by: finalCreator,
+      status: finalStatus || "Synthesized",
+      mat_type: f.matType,
+      created_at: today(),
+      tags: f.tags.split(",").map(t=>t.trim()).filter(Boolean),
+      files
+    });
+    setBusy(false);
+    onClose();
+  };
+
+  return(
+    <Modal title="Register New Material" wide onClose={onClose}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+
+        {/* Material Name */}
+        <div style={{gridColumn:"1/-1"}}>
+          <Field label="Material Name" required>
+            <input style={S.inp} placeholder="e.g. Ti-6Al-4V Alloy" value={f.name} onChange={e=>set("name",e.target.value)} />
+          </Field>
+        </div>
+
+        {/* Composition + Physical Form */}
+        <Field label="Composition / Formula">
+          <input style={S.inp} placeholder="e.g. Ti 90%, Al 6%, V 4%" value={f.composition} onChange={e=>set("composition",e.target.value)} />
+        </Field>
+        <Field label="Physical Form">
+          <input style={S.inp} placeholder="e.g. Powder, Rod, Film" value={f.form} onChange={e=>set("form",e.target.value)} />
+        </Field>
+
+        {/* Material Type — NEW */}
+        <div style={{gridColumn:"1/-1"}}>
+          <Field label="Material Type" hint="Select a category or add a custom one">
+            <select style={S.inp} value={f.matType} onChange={e=>set("matType",e.target.value)}>
+              <option value="">— Select type —</option>
+              {allMatTypes.map(t=><option key={t}>{t}</option>)}
+            </select>
+            <AddNew placeholder="e.g. Hydrogel, Metamaterial, MOF…" color="#05C091"
+              onAdd={t=>{ onAddCustomMatType(t); set("matType",t); }} />
+          </Field>
+        </div>
+
+        {/* Created By — with custom option */}
+        <Field label="Created By" required hint="Select from list or type a custom name">
+          <select style={S.inp} value={f.created_by} onChange={e=>set("created_by",e.target.value)}>
+            <option value="">— Select —</option>
+            {allTesters.map(m=><option key={m}>{m}</option>)}
+            <option value="__custom__">✏️ Type a custom name…</option>
+          </select>
+          {f.created_by==="__custom__" && (
+            <input style={{...S.inp,marginTop:8}} placeholder="Enter full name" value={f.customCreator}
+              onChange={e=>set("customCreator",e.target.value)} autoFocus />
+          )}
+        </Field>
+
+        {/* Status — with custom option */}
+        <Field label="Status" hint="Select or add a custom status">
+          <select style={S.inp} value={f.status} onChange={e=>set("status",e.target.value)}>
+            {allStatuses.map(s=><option key={s}>{s}</option>)}
+            <option value="__custom__">✏️ Type a custom status…</option>
+          </select>
+          {f.status==="__custom__" && (
+            <input style={{...S.inp,marginTop:8}} placeholder="e.g. Under Review, On Hold…" value={f.customStatus}
+              onChange={e=>set("customStatus",e.target.value)} autoFocus />
+          )}
+          <AddNew placeholder="e.g. Under Review, On Hold…" color="#FF9500"
+            onAdd={s=>{ onAddCustomStatus(s); set("status",s); }} />
+        </Field>
+
+        {/* Tags */}
+        <div style={{gridColumn:"1/-1"}}>
+          <Field label="Tags (comma-separated)">
+            <input style={S.inp} placeholder="e.g. aerospace, titanium, high-temp" value={f.tags} onChange={e=>set("tags",e.target.value)} />
+          </Field>
+        </div>
+
+        {/* Notes */}
+        <div style={{gridColumn:"1/-1"}}>
+          <Field label="Notes">
+            <textarea style={{...S.inp,resize:"vertical",minHeight:72}} placeholder="Synthesis conditions, batch info…" value={f.notes} onChange={e=>set("notes",e.target.value)} />
+          </Field>
+        </div>
+
+        {/* Files */}
+        <div style={{gridColumn:"1/-1"}}>
+          <Field label="Attach Files" hint="Upload datasheets, images, reference documents">
+            <FileZone files={files} onChange={setFiles} />
+          </Field>
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:8}}>
+        <button onClick={onClose} style={{border:"1px solid #D2D2D7",background:"#fff",color:"#1D1D1F",padding:"10px 22px",borderRadius:10,cursor:"pointer",fontSize:15}}>Cancel</button>
+        <button onClick={submit} disabled={!ok||busy} style={{background:ok&&!busy?"#0071E3":"#D1D1D6",border:"none",color:"#fff",padding:"10px 26px",borderRadius:10,cursor:ok&&!busy?"pointer":"not-allowed",fontSize:15,fontWeight:600}}>
+          {busy?"Saving…":"Register Material"}
+        </button>
+      </div>
+    </Modal>
+  );
 }
 
 // ══════════════════════════════════════════════
@@ -415,57 +528,119 @@ function DetailPage({mat,onBack,onAddTest,onStatusChange,onDelete,cTests,addCTes
 }
 
 // ══════════════════════════════════════════════
-// ── TEAM / ADMIN PAGE ─────────────────────────
+// ── TEAM PAGE ─────────────────────────────────
 // ══════════════════════════════════════════════
-function TeamPage({materials,allTesters,cTesters,isAdmin,token,onRefresh}){
-  const [users,setUsers]=useState([]);
-  const [loadingUsers,setLoadingUsers]=useState(false);
+function TeamPage({materials, allTesters, cTesters, isAdmin, token, onAddContributor}){
+  const [users,setUsers]         = useState([]);
+  const [loadingUsers,setLoading]= useState(false);
+  const [newContrib,setNewContrib]= useState("");
+  const [addingContrib,setAdding]= useState(false);
 
-  const loadUsers=async()=>{
-    if(!isAdmin)return;
-    setLoadingUsers(true);
-    try{
-      const rows=await api.get("allowed_users?order=approved.asc,created_at.desc",token);
-      setUsers(rows||[]);
-    }catch(e){console.error(e);}
-    setLoadingUsers(false);
+  const loadUsers = async() => {
+    if(!isAdmin) return;
+    setLoading(true);
+    try { const rows = await api.get("allowed_users?order=approved.asc,created_at.desc", token); setUsers(rows||[]); }
+    catch(e){ console.error(e); }
+    setLoading(false);
   };
+  useEffect(()=>{ if(isAdmin) loadUsers(); },[isAdmin]);
 
-  useEffect(()=>{if(isAdmin)loadUsers();},[isAdmin]);
+  const approveUser = async(id) => { await api.patch("allowed_users?id=eq."+id,{approved:true},token); loadUsers(); };
+  const removeUser  = async(id) => { await api.del("allowed_users?id=eq."+id,token); loadUsers(); };
 
-  const approveUser=async(id)=>{
-    await api.patch("allowed_users?id=eq."+id,{approved:true},token);
-    loadUsers();
-  };
-  const removeUser=async(id)=>{
-    await api.del("allowed_users?id=eq."+id,token);
-    loadUsers();
+  const submitContrib = () => {
+    const n = newContrib.trim();
+    if(!n) return;
+    onAddContributor(n);
+    setNewContrib("");
+    setAdding(false);
   };
 
   return(
     <div className="fadeIn">
-      <h1 style={{fontSize:32,fontWeight:700,letterSpacing:"-0.03em",marginBottom:6}}>Team</h1>
-      <p style={{fontSize:15,color:"#6E6E73",marginBottom:28}}>Contributions from each team member.</p>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+        <div>
+          <h1 style={{fontSize:32,fontWeight:700,letterSpacing:"-0.03em",marginBottom:4}}>Team</h1>
+          <p style={{fontSize:15,color:"#6E6E73"}}>Contributions from each team member.</p>
+        </div>
+        {/* Add Contributor button */}
+        {isAdmin && !addingContrib && (
+          <button onClick={()=>setAdding(true)} style={{background:"#0071E3",border:"none",color:"#fff",padding:"9px 20px",borderRadius:10,cursor:"pointer",fontSize:14,fontWeight:600,whiteSpace:"nowrap"}}>+ Add Contributor</button>
+        )}
+      </div>
 
-      {/* Member stats cards */}
+      {/* Add Contributor inline form */}
+      {isAdmin && addingContrib && (
+        <div style={{background:"#EAF3FF",border:"1px solid #0071E330",borderRadius:14,padding:"16px 20px",marginBottom:20,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          <span style={{fontSize:14,fontWeight:600,color:"#0071E3",whiteSpace:"nowrap"}}>New Contributor:</span>
+          <input style={{...S.inp,flex:1,minWidth:200,fontSize:14}} placeholder="e.g. Dr. Sarah Kim" value={newContrib}
+            onChange={e=>setNewContrib(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter")submitContrib();if(e.key==="Escape"){setAdding(false);setNewContrib("");}}}
+            autoFocus />
+          <button onClick={submitContrib} style={{background:"#0071E3",border:"none",color:"#fff",padding:"9px 20px",borderRadius:9,cursor:"pointer",fontWeight:600,fontSize:14}}>Add</button>
+          <button onClick={()=>{setAdding(false);setNewContrib("");}} style={{background:"#F2F2F7",border:"none",color:"#6E6E73",padding:"9px 14px",borderRadius:9,cursor:"pointer",fontSize:14}}>Cancel</button>
+        </div>
+      )}
+
+      {/* Member cards */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:16,marginBottom:36}}>
         {allTesters.map(name=>{
-          const created=materials.filter(m=>m.created_by===name).length;
-          const allT=materials.flatMap(m=>m.tests||[]);
-          const tested=allT.filter(t=>t.tester===name).length;
-          const passed=allT.filter(t=>t.tester===name&&(t.outcome==="Pass"||t.status==="Pass")).length;
+          const created = materials.filter(m=>m.created_by===name).length;
+          const allT    = materials.flatMap(m=>m.tests||[]);
+          const tested  = allT.filter(t=>t.tester===name).length;
+          const passed  = allT.filter(t=>t.tester===name&&(t.outcome==="Pass"||t.status==="Pass")).length;
+          const recent  = allT.filter(t=>t.tester===name).sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,3)
+            .map(t=>({...t, matName:(materials.find(m=>(m.tests||[]).some(x=>x.id===t.id))||{}).name||""}));
+          const isCustom = cTesters.includes(name);
           return(
             <div key={name} style={{background:"#fff",border:"1px solid #F2F2F7",borderRadius:16,padding:24,boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
-              <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:16}}><Avatar name={name} size={48} /><div><div style={{fontSize:17,fontWeight:700,color:"#1D1D1F"}}>{name}</div><div style={{fontSize:13,color:"#8E8E93",marginTop:2}}>Research Team</div></div></div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>
-                {[["Materials",created,"#0071E3"],["Tests",tested,"#34C759"],["Pass Rate",tested>0?Math.round(passed/tested*100)+"%":"—","#FF9500"]].map(([l,v,c])=>(<div key={l} style={{background:"#F9F9FB",borderRadius:10,padding:10,textAlign:"center"}}><div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div><div style={{fontSize:11,color:"#8E8E93",marginTop:3,fontWeight:500}}>{l}</div></div>))}
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+                <div style={{display:"flex",alignItems:"center",gap:14}}>
+                  <Avatar name={name} size={48} />
+                  <div>
+                    <div style={{fontSize:17,fontWeight:700,color:"#1D1D1F"}}>{name}</div>
+                    <div style={{fontSize:13,color:"#8E8E93",marginTop:2}}>{isCustom?"Contributor":"Research Team"}</div>
+                  </div>
+                </div>
               </div>
+
+              {/* Stats */}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:recent.length>0?16:0}}>
+                {[["Materials",created,"#0071E3"],["Tests",tested,"#34C759"],["Pass Rate",tested>0?Math.round(passed/tested*100)+"%":"—","#FF9500"]].map(([l,v,c])=>(
+                  <div key={l} style={{background:"#F9F9FB",borderRadius:10,padding:10,textAlign:"center"}}>
+                    <div style={{fontSize:20,fontWeight:700,color:c}}>{v}</div>
+                    <div style={{fontSize:11,color:"#8E8E93",marginTop:3,fontWeight:500}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Recent tests */}
+              {recent.length>0&&(
+                <>
+                  <div style={{fontSize:12,fontWeight:600,color:"#8E8E93",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Recent Tests</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {recent.map(t=>{
+                      const meta=getMeta(t.type); const lbl=t.type_label||meta.label; const oc=t.outcome||t.status||"Pass";
+                      return(
+                        <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:"#F9F9FB",borderRadius:8}}>
+                          <div style={{width:6,height:6,borderRadius:"50%",background:meta.color,flexShrink:0}} />
+                          <div style={{flex:1,minWidth:0}}>
+                            <span style={{fontSize:13,fontWeight:500,color:"#1D1D1F"}}>{lbl}</span>
+                            {t.matName&&<span style={{fontSize:12,color:"#8E8E93"}}> · {t.matName}</span>}
+                          </div>
+                          <Pill color={OUTCOME_COLORS[oc]||"#6E6E73"}>{oc}</Pill>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
           );
         })}
       </div>
 
-      {/* Admin: User Access Management */}
+      {/* Admin: Access Management */}
       {isAdmin&&(
         <div style={{background:"#fff",border:"1px solid #F2F2F7",borderRadius:16,padding:24,boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
@@ -475,7 +650,7 @@ function TeamPage({materials,allTesters,cTesters,isAdmin,token,onRefresh}){
             </div>
             <button onClick={loadUsers} style={{background:"#F2F2F7",border:"none",color:"#6E6E73",padding:"7px 14px",borderRadius:8,cursor:"pointer",fontSize:13}}>↺ Refresh</button>
           </div>
-          {loadingUsers?(<div style={{display:"flex",justifyContent:"center",padding:32}}><Spinner size={32} /></div>):(
+          {loadingUsers?(<div style={{display:"flex",justifyContent:"center",padding:32}}><Spinner size={32}/></div>):(
             users.length===0?(<div style={{textAlign:"center",padding:32,color:"#8E8E93",fontSize:14}}>No users have signed in yet.</div>):(
               <div style={{display:"flex",flexDirection:"column",gap:10}}>
                 {users.map(u=>(
@@ -496,7 +671,7 @@ function TeamPage({materials,allTesters,cTesters,isAdmin,token,onRefresh}){
             )
           )}
           <div style={{marginTop:16,background:"#EAF3FF",borderRadius:10,padding:"12px 16px",fontSize:13,color:"#0071E3"}}>
-            💡 When someone new signs in, they appear here as "Pending". Click <strong>Approve</strong> to grant access or <strong>Remove</strong> to block them.
+            💡 When someone registers, they appear here as "Pending". Click <strong>Approve</strong> to grant access or <strong>Remove</strong> to block them.
           </div>
         </div>
       )}
@@ -527,9 +702,11 @@ function App(){
   const [search,setSearch]     =useState("");
   const [fStatus,setFStatus]   =useState("All");
   const [fMember,setFMember]   =useState("All");
-  const [cTests,setCTests]     =useState([]);
-  const [cTesters,setCTesters] =useState([]);
-  const [cOutcomes,setCOutcomes]=useState([]);
+  const [cTests,setCTests]       = useState([]);
+  const [cTesters,setCTesters]   = useState([]);
+  const [cOutcomes,setCOutcomes] = useState([]);
+  const [cStatuses,setCStatuses] = useState([]);
+  const [cMatTypes,setCMatTypes] = useState([]);
 
   const ADMIN_EMAIL = "nannorymunirech22@gmail.com";
   const allTesters  = [...TEAM_STATIC,...cTesters];
@@ -615,9 +792,11 @@ function App(){
       ]);
       setMaterials((mats||[]).map(m=>({...m,tests:(tests||[]).filter(t=>t.material_id===m.id)})));
       (lists||[]).forEach(r=>{
-        if(r.key==="testTypes")setCTests(r.value||[]);
-        if(r.key==="testers")  setCTesters(r.value||[]);
-        if(r.key==="outcomes") setCOutcomes(r.value||[]);
+        if(r.key==="testTypes") setCTests(r.value||[]);
+        if(r.key==="testers")   setCTesters(r.value||[]);
+        if(r.key==="outcomes")  setCOutcomes(r.value||[]);
+        if(r.key==="statuses")  setCStatuses(r.value||[]);
+        if(r.key==="matTypes")  setCMatTypes(r.value||[]);
       });
     }catch(e){setDbError(e.message);}
     finally{setLoading(false);}
@@ -626,10 +805,13 @@ function App(){
   useEffect(()=>{ if(!approved)return; const t=setInterval(()=>load(true),15000);return()=>clearInterval(t); },[approved]);
 
   // ── Custom lists ─────────────────────────────
-  const saveList=async(key,value)=>api.patch("custom_lists?key=eq."+key,{value},token);
-  const addCTest=async t=>{const u=cTests.some(x=>x.id===t.id)?cTests:[...cTests,t];setCTests(u);await saveList("testTypes",u);};
-  const addCTester=async n=>{const u=cTesters.includes(n)?cTesters:[...cTesters,n];setCTesters(u);await saveList("testers",u);};
-  const addCOutcome=async o=>{const u=cOutcomes.includes(o)?cOutcomes:[...cOutcomes,o];setCOutcomes(u);await saveList("outcomes",u);};
+  const saveList     = async(key,value) => api.patch("custom_lists?key=eq."+key,{value},token);
+  const addCTest     = async t => { const u=cTests.some(x=>x.id===t.id)?cTests:[...cTests,t];    setCTests(u);    await saveList("testTypes",u); };
+  const addCTester   = async n => { const u=cTesters.includes(n)?cTesters:[...cTesters,n];        setCTesters(u);  await saveList("testers",u); };
+  const addCOutcome  = async o => { const u=cOutcomes.includes(o)?cOutcomes:[...cOutcomes,o];     setCOutcomes(u); await saveList("outcomes",u); };
+  const addCStatus   = async s => { const u=cStatuses.includes(s)?cStatuses:[...cStatuses,s];     setCStatuses(u); await saveList("statuses",u); };
+  const addCMatType  = async t => { const u=cMatTypes.includes(t)?cMatTypes:[...cMatTypes,t];     setCMatTypes(u); await saveList("matTypes",u); };
+  const addContributor = async n => { await addCTester(n); };
 
   // ── CRUD ─────────────────────────────────────
   const addMaterial=async mat=>{setSyncing(true);const{tests,...row}=mat;await api.post("materials",row,token);await load(true);setSyncing(false);};
@@ -761,11 +943,11 @@ function App(){
           )}
 
           {/* TEAM */}
-          {view==="team"&&<TeamPage materials={materials} allTesters={allTesters} cTesters={cTesters} isAdmin={isAdmin} token={token} onRefresh={load} />}
+          {view==="team"&&<TeamPage materials={materials} allTesters={allTesters} cTesters={cTesters} isAdmin={isAdmin} token={token} onAddContributor={addContributor} />}
         </main>
       )}
 
-      {showAdd&&<AddMaterialModal onClose={()=>setShowAdd(false)} onAdd={async m=>{await addMaterial(m);setShowAdd(false);}} allTesters={allTesters} />}
+      {showAdd&&<AddMaterialModal onClose={()=>setShowAdd(false)} onAdd={async m=>{await addMaterial(m);setShowAdd(false);}} allTesters={allTesters} customStatuses={cStatuses} onAddCustomStatus={addCStatus} customMatTypes={cMatTypes} onAddCustomMatType={addCMatType} />}
     </div>
   );
 }
